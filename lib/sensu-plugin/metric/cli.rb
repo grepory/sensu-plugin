@@ -1,5 +1,6 @@
 require 'sensu-plugin/cli'
 require 'json'
+require 'socket'
 
 module Sensu::Plugin::Metric
   class CLI < Sensu::Plugin::CLI
@@ -25,52 +26,55 @@ module Sensu::Plugin::Metric
       end
     end
 
-    def initialize
-      super
-      self.format = method(:to_graphite)
-    end
-
     option :graphite,
       :long => "--graphite",
       :boolean => true,
-      :default => false,
-      :proc => Proc.new { self.format = method(:to_graphite) }
+      :default => true
 
     option :json,
       :long => "--json",
       :boolean => true,
-      :default => false,
-      :proc => Proc.new { self.format = method(:to_json) }
+      :default => false
 
     option :opentsdb,
       :long => "--opentsdb",
       :boolean => true,
-      :default => false,
-      :proc => Proc.new { self.format = method(:to_opentsdb) }
+      :default => false
 
     def to_json(metric)
-      metric[:output_type] = 'json'
       ::JSON.generate(metric)
     end
 
     def to_graphite(metric)
-      metric[:output_type] = 'graphite'
-      "#{metric[:name]}\t#{metric[:value]}"
+      "#{Socket.gethostname}.#{metric[:name]}\t#{metric[:value]}\t#{metric[:timestamp]}\n"
     end
 
     def to_opentsdb(metric)
-      metric[:output_type] = 'opentsdb'
       out = "#{metric[:name]}\t#{metric[:timestamp]}\t#{metric[:value]}"
-      metric[:tags].each do |tag|
-        out << "\t#{tag}=#{metrics[:tags][tag]}"
+      metric[:tags].each_key do |tag|
+        out << "\t#{tag}=#{metric[:tags][tag]}"
       end
-      out
+      "#{out}\n"
     end
 
     def output(metric={})
-      metric[:timestamp] ||= Time.now.to_i
-      puts self.format(metric)
+      if config[:json]
+        format = method(:to_json)
+      elsif config[:opentsdb]
+        format = method(:to_opentsdb)
+      elsif config[:graphite]
+        format = method(:to_graphite)
+      end
+      
+      if metric.length > 0
+        m = { }
+        m[:timestamp] = Time.now.to_i
+        m[:tags] = { }
+        m[:tags][:host] = Socket.gethostname
+        m.update(metric)
+        
+        puts format.call(m)
+      end
     end
-
   end
 end
